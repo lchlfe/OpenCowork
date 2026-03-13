@@ -10,7 +10,8 @@ import {
   ChevronDown,
   Check,
   Shield,
-  X
+  X,
+  Plus
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@renderer/components/ui/button'
@@ -18,6 +19,13 @@ import { Input } from '@renderer/components/ui/input'
 import { Switch } from '@renderer/components/ui/switch'
 import { Separator } from '@renderer/components/ui/separator'
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription
+} from '@renderer/components/ui/dialog'
 import { useChannelStore } from '@renderer/stores/channel-store'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { ProviderIcon, ModelIcon } from '@renderer/components/settings/provider-icons'
@@ -61,6 +69,162 @@ function ChannelIcon({
     return <IconComponent className={`shrink-0 ${className}`} />
   }
   return <Puzzle className={`shrink-0 ${className}`} />
+}
+
+// ─── Category grouping for built-in plugins ───
+
+const PLUGIN_CATEGORIES: { label: string; types: string[] }[] = [
+  { label: 'China', types: ['feishu-bot', 'dingtalk-bot', 'wecom-bot', 'qq-bot'] },
+  { label: 'International', types: ['telegram-bot', 'discord-bot', 'whatsapp-bot'] }
+]
+
+// --- Add Channel Dialog ---
+
+function AddChannelDialog({
+  open,
+  onOpenChange
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+}): React.JSX.Element {
+  const { t } = useTranslation('settings')
+  const providers = useChannelStore((s) => s.providers)
+  const addChannel = useChannelStore((s) => s.addChannel)
+
+  const [name, setName] = useState('')
+  const [type, setType] = useState('')
+  const [config, setConfig] = useState<Record<string, string>>({})
+  const [step, setStep] = useState<'select' | 'config'>('select')
+
+  const selectedDescriptor = providers.find((p) => p.type === type)
+  const configSchema = selectedDescriptor?.configSchema ?? []
+
+  const handleTypeSelect = (newType: string): void => {
+    setType(newType)
+    setConfig({})
+    setStep('config')
+  }
+
+  const handleConfigChange = (key: string, value: string): void => {
+    setConfig((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const handleAdd = async (): Promise<void> => {
+    if (!name.trim() || !type) return
+    try {
+      await addChannel(type, name.trim(), config)
+      toast.success(t('channel.added', { name: name.trim() }))
+      handleClose()
+    } catch (err) {
+      toast.error(String(err))
+    }
+  }
+
+  const handleClose = (): void => {
+    setName('')
+    setType('')
+    setConfig({})
+    setStep('select')
+    onOpenChange(false)
+  }
+
+  const canAdd =
+    name.trim() &&
+    type &&
+    configSchema.every((field) => !field.required || config[field.key]?.trim())
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('channel.addChannel', 'Add Channel')}</DialogTitle>
+          <DialogDescription>
+            {step === 'select'
+              ? t('channel.selectType', 'Select a channel type to add')
+              : t('channel.configureDesc', 'Configure your channel credentials')}
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === 'select' ? (
+          <div className="space-y-2 pt-2">
+            {PLUGIN_CATEGORIES.map((category) => {
+              const categoryProviders = providers.filter((p) => category.types.includes(p.type))
+              if (categoryProviders.length === 0) return null
+              return (
+                <div key={category.label}>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-2 mb-2">
+                    {category.label}
+                  </p>
+                  <div className="space-y-1">
+                    {categoryProviders.map((p) => (
+                      <button
+                        key={p.type}
+                        onClick={() => handleTypeSelect(p.type)}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md hover:bg-muted transition-colors text-left"
+                      >
+                        <ChannelIcon icon={p.icon} className="size-5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">{p.displayName}</p>
+                          <p className="text-xs text-muted-foreground truncate">{p.description}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="space-y-4 pt-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('channel.name', 'Name')}</label>
+              <Input
+                placeholder={t('channel.namePlaceholder', 'My Feishu Bot')}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <ChannelIcon icon={selectedDescriptor?.icon ?? ''} className="size-4" />
+              <span>{selectedDescriptor?.displayName}</span>
+              <button
+                onClick={() => setStep('select')}
+                className="text-xs text-primary hover:underline ml-auto"
+              >
+                {t('action.change', 'Change')}
+              </button>
+            </div>
+
+            {configSchema.map((field) => (
+              <div key={field.key} className="space-y-2">
+                <label className="text-sm font-medium">
+                  {t(field.label, field.key)}
+                  {field.required && <span className="text-destructive ml-1">*</span>}
+                </label>
+                <Input
+                  type={field.type === 'secret' ? 'password' : 'text'}
+                  placeholder={field.placeholder}
+                  value={config[field.key] ?? ''}
+                  onChange={(e) => handleConfigChange(field.key, e.target.value)}
+                />
+              </div>
+            ))}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={handleClose}>
+                {t('action.cancel', { ns: 'common' })}
+              </Button>
+              <Button disabled={!canAdd} onClick={handleAdd}>
+                {t('channel.add', 'Add')}
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 // ─── Channel Config Panel (right side) ───
@@ -700,13 +864,6 @@ function ChannelConfigPanel({ plugin }: { plugin: PluginInstance }): React.JSX.E
   )
 }
 
-// ─── Category grouping for built-in plugins ───
-
-const PLUGIN_CATEGORIES: { label: string; types: string[] }[] = [
-  { label: 'China', types: ['feishu-bot', 'dingtalk-bot', 'wecom-bot', 'qq-bot'] },
-  { label: 'International', types: ['telegram-bot', 'discord-bot', 'whatsapp-bot'] }
-]
-
 // ─── Main Plugin Panel ───
 
 export function ChannelPanel(): React.JSX.Element {
@@ -721,6 +878,7 @@ export function ChannelPanel(): React.JSX.Element {
   const toggleChannelEnabled = useChannelStore((s) => s.toggleChannelEnabled)
 
   const [searchQuery, setSearchQuery] = useState('')
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
 
   // Load providers and plugins on mount
   useEffect(() => {
@@ -887,6 +1045,19 @@ export function ChannelPanel(): React.JSX.Element {
                 <p className="text-xs">{t('channel.noChannels', 'No channels found')}</p>
               </div>
             )}
+
+            {/* Add channel button */}
+            <div className="p-2 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start text-xs h-8"
+                onClick={() => setAddDialogOpen(true)}
+              >
+                <Plus className="size-3.5 mr-1.5" />
+                {t('channel.addChannel', 'Add Channel')}
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -901,6 +1072,8 @@ export function ChannelPanel(): React.JSX.Element {
           )}
         </div>
       </div>
+
+      <AddChannelDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
     </div>
   )
 }
